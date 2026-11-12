@@ -1,0 +1,11 @@
+# Runtime diagnostics and local configuration never belong in source control.
+*.log
+*.zip
+*validation-results*
+*preview*.txt
+.env
+.env.*
+work/
+incident-logs/
+.DS_Store
+Thumbs.db
