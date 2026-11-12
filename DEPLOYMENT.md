@@ -32,7 +32,7 @@ Evidence streams directly into the incident file, with meminfo, recent kernel me
 
 ## Install on each server
 
-1. Put `unraid-memory-watchdog.sh` at:
+1. Put `unraid-memory-watchdog.sh` and `unraid-memory-watchdog.conf` in `/boot/config/custom/`. Keep the settings file when updating the main script. The main script path is:
 
    ```text
    /boot/config/custom/unraid-memory-watchdog.sh
@@ -42,7 +42,7 @@ Evidence streams directly into the incident file, with meminfo, recent kernel me
 
    ```powershell
    ssh root@YOUR-SERVER 'mkdir -p /boot/config/custom'
-   scp ./unraid-memory-watchdog.sh root@YOUR-SERVER:/boot/config/custom/
+   scp ./unraid-memory-watchdog.sh ./unraid-memory-watchdog.conf root@YOUR-SERVER:/boot/config/custom/
    ```
 
 2. In the Unraid terminal, normalize line endings and validate syntax:
@@ -58,14 +58,38 @@ Evidence streams directly into the incident file, with meminfo, recent kernel me
 
    ```bash
    #!/bin/bash
+   # Paste into Unraid User Scripts; schedule At Startup of Array.
+   # This short launcher starts the longer watchdog and then returns control to the
+   # plugin. It does not perform memory checks itself or wait for an incident.
+
+   # Stop the launcher if a preparation step fails, rather than launch a broken copy.
    set -e
+   # Newly created files should be readable/writable only by the owner where supported.
    umask 077
+   # /run lives in RAM. Keep the running copy and its small status log off the flash.
    r=/run/unraid-memory-watchdog
    mkdir -p "$r"
+   # Probe the watchdog's lock. If an instance already owns it, leave it alone.
+   # The watchdog itself also takes this lock, guarding against overlapping launches.
    if ! flock -n "$r/lock" true; then exit 0; fi
+   # Prepare a fresh RAM copy without changing the persistent source on the boot drive.
    cp /boot/config/custom/unraid-memory-watchdog.sh "$r/watchdog.new"
+   # Settings are copied separately so updating the main script preserves preferences.
+   # Remove an old RAM copy first: if the persistent settings file was removed, the
+   # next start must use built-in defaults rather than silently reuse stale settings.
+   rm -f "$r/unraid-memory-watchdog.conf"
+   if [[ -f /boot/config/custom/unraid-memory-watchdog.conf ]]; then
+       cp /boot/config/custom/unraid-memory-watchdog.conf "$r/unraid-memory-watchdog.conf"
+   fi
+   # "bash -n" checks shell syntax without running the script or taking any action.
    bash -n "$r/watchdog.new"
+   # Give the checked copy its final name only after the syntax check passes.
    mv "$r/watchdog.new" "$r/watchdog.sh"
+   # nohup lets the watchdog survive the launcher's exit. Bash is invoked explicitly
+   # because executable permissions/mount options can differ on the boot flash.
+   # ">" starts a fresh RAM service log; "2>&1" includes errors in that same log.
+   # Input comes from /dev/null, so the child never waits for this plugin's terminal.
+   # The final "&" starts it in the background, allowing this User Script to finish.
    nohup /bin/bash "$r/watchdog.sh" > "$r/service.log" 2>&1 < /dev/null &
    ```
 
@@ -83,9 +107,23 @@ Evidence streams directly into the incident file, with meminfo, recent kernel me
 
    Expect `restart_container=0 psi=0` and the watchdog Bash process. Recheck after your next normal reboot. There is no external supervisor: an unexpected exit requires relaunching it.
 
+## Why a background watchdog instead of a 15-minute task?
+
+Memory exhaustion can develop within a few minutes or less. A check every 15 minutes can miss the entire incident: the host might hang before the next scheduled run. This watchdog stays running and checks every 30 seconds, so it can begin collecting evidence while the host is still responsive. Critical capture starts at the first critical observation; it does not wait another minute.
+
+Keeping one process alive also preserves the timing of each pressure episode. It remembers when low memory began, whether a report was already attempted, and whether memory stayed healthy long enough to rearm. A separate one-shot task would need to save and reload that state. Here it remains in RAM without routine flash writes.
+
+The User Scripts schedule starts the background process; it does not set the memory-check interval. After launch, the watchdog uses its own loop. The launcher returns promptly so the plugin is not left waiting for a never-ending foreground task. Copying the script into `/run` keeps the active copy in RAM, and the lock prevents duplicate instances from monitoring or acting at the same time.
+
+This arrangement improves response time and tracking continuity, but it is not a supervisor. If the watchdog process crashes or is killed, it needs to be launched again. A periodic relaunch schedule could provide an additional guard using the same duplicate-protected launcher; it would supplement continuous monitoring rather than replace it. No userspace schedule can rescue a fully hung kernel.
+
 ## Settings
 
-Edit the constants at the top of the persistent script, then stop/relaunch to load them. Defaults adapt host thresholds to the RAM size of each server.
+Edit `/boot/config/custom/unraid-memory-watchdog.conf`, then stop and relaunch the watchdog to load changes. Preserve this file when updating the scripts. The launcher copies it into RAM once at startup; routine polls do not reread the flash. If no settings file is present, the script uses its built-in defaults. Defaults adapt host thresholds to each server's RAM size.
+
+Use one `NAME=value` per line. Blank lines, `#` comments, and simple surrounding quotes are allowed. Values are literal: commands, substitutions and variables are never executed or expanded. Unknown settings, invalid values, or files larger than 16 KiB prevent startup. Runtime directories and command paths cannot be changed through this file. For a manual run with another settings file, use `bash unraid-memory-watchdog.sh /path/to/settings.conf`.
+
+For example:
 
 ```bash
 WARN_PCT=15
@@ -100,7 +138,7 @@ RESTART_CONTAINER=0
 
 ## Optional Docker-only recovery
 
-The delivered mode only logs and alerts. To enable a recovery attempt later:
+The default mode only logs and alerts. To enable a recovery attempt, edit these values in the settings file and relaunch:
 
 ```bash
 RESTART_CONTAINER=1

@@ -20,12 +20,16 @@ Host monitoring covers memory pressure from any source. Optional recovery target
 
 ## Install
 
-1. Download `unraid-memory-watchdog.sh` and save it on the server as `/boot/config/custom/unraid-memory-watchdog.sh`.
+1. Download `unraid-memory-watchdog.sh` and `unraid-memory-watchdog.conf` into `/boot/config/custom/` on the server.
 2. Configure Unraid's notification destinations for **Alerts**.
 3. Create an entry in the **User Scripts** plugin and paste in [user-script-launcher.sh](user-script-launcher.sh).
 4. Schedule it **At Startup of Array**, then run it once.
 
 See the [deployment guide](DEPLOYMENT.md) for verification, configuration, optional Docker recovery, updates, and safe testing. The launcher runs the watchdog in the background and blocks duplicate instances.
+
+## Per-server settings
+
+Edit `unraid-memory-watchdog.conf` for each server and relaunch the watchdog after changes. Keep this file when updating the scripts so upgrades preserve your preferences. The settings file contains plain-language explanations and is parsed as data, never executed as shell code. Omitted settings fall back to the script defaults.
 
 ## Defaults
 
